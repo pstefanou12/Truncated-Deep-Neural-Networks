@@ -14,6 +14,7 @@ import torch as ch
 import torch.nn as nn
 from torch import Tensor
 from torch.distributions import Gumbel
+from torch import Generator
 from tqdm.notebook import tqdm
 import math
 import numpy as np
@@ -26,7 +27,10 @@ import seaborn as sns
 import os
 import config
 import pickle
-import pandas as pd
+import pandas as pdd
+
+# set environment variable so that stores can create output files
+os.environ['HDF5_USE_FILE_LOCKING'] = 'FALSE'
 
 
 # CONSTANTS
@@ -260,7 +264,6 @@ def main(args):
         out_store = store.Store(BASE_CLASSIFIER)
         ch.manual_seed(0)
         train.train_model(args, base_classifier, (train_one_loader, test_loader), store=out_store)
-        out_store.close()
 
         # calibrate base classifier
         temp = calibrate(test_loader, base_classifier)
@@ -276,6 +279,7 @@ def main(args):
         base_test_results = train.eval_model(args, base_classifier, test_loader, store=out_store, table='test')
         base_train_results = train.eval_model(args, base_classifier, trunc_train_loader, store=out_store, table='trunc_train')
         base_train_one_results = train.eval_model(args, base_classifier, train_one_loader, store=out_store, table='train_base')
+        out_store.close()
 
         # logging store
         delphi_, _ = model_utils.make_and_restore_model(arch='resnet18', dataset=ds)
@@ -315,7 +319,7 @@ def main(args):
 if __name__ == '__main__': 
     # hyperparameters
     args = Parameters({ 
-        'epochs': 1,
+        'epochs': 100,
         'workers': 8, 
         'batch_size': 128, 
         'accuracy': True,
@@ -333,7 +337,6 @@ if __name__ == '__main__':
         'logit_ball': 7.5,
         'device': 'cuda' if ch.cuda.is_available() else 'cpu'
     })
-
 
     main(args)
 
