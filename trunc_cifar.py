@@ -5,7 +5,6 @@ from delphi import oracle
 from delphi.utils.datasets import CIFAR
 import delphi.utils.constants as consts
 import delphi.utils.data_augmentation as da
-from delphi.utils.helpers import setup_store_with_metadata
 
 import torchvision 
 from torchvision import transforms
@@ -27,11 +26,15 @@ import seaborn as sns
 import os
 import config
 import pickle
-import pandas as pdd
+import pandas as pd
+from argparse import ArgumentParser
+
 
 # set environment variable so that stores can create output files
 os.environ['HDF5_USE_FILE_LOCKING'] = 'FALSE'
 
+parser = ArgumentParser(description='Parser for running Truncated CIFAR-10 Experiments')
+parser.add_argument('--lr', type=float, default=1e-1, help='learning rate')
 
 # CONSTANTS
 # noise distributions
@@ -47,8 +50,6 @@ DATA_PATH = '/home/gridsan/stefanou/data/'
 TRUNC_TRAIN_DATASET = 'trunc_train_'
 TRUNC_VAL_DATASET = 'trunc_val_'
 TRUNC_TEST_DATASET = 'trunc_test_'
-
-LEARNING_RATES = [1e-3, 1e-2, 1e-1, 2e-1]
 
 
 # HELPER CODE
@@ -237,86 +238,104 @@ class TruncatedCE(ch.autograd.Function):
         return -avg / pred.size(0), None, None
 
 
-# hyperparameter function
-def main(args):     
-    # iterate over learning rates
-    for lr in LEARNING_RATES: 
-        args.__setattr__('lr', lr)
+def setup_store_with_metadata(args, store):
+    '''
+    Sets up a store for training according to the arguments object. See the
+    argparse object above for options.
+    '''
+    # Add git commit to args
+    args.version = version
 
-        # load datasets
-        ds = CIFAR(data_path=DATA_PATH)
-        dataset = torchvision.datasets.CIFAR10(root=DATA_PATH, train=True,
-                                                download=True, transform=transform_)
-        train_one, train_two = ch.utils.data.random_split(dataset, [25000, 25000], generator=Generator().manual_seed(0))
-        train_one_loader = ch.utils.data.DataLoader(train_one, batch_size=args.batch_size,
-                                                shuffle=args.shuffle, num_workers=args.workers)
-        train_two_loader = ch.utils.data.DataLoader(train_two, batch_size=args.batch_size,
-                                                shuffle=args.shuffle, num_workers=args.workers)
+    args_dict = args.as_dict()
+    schema = cox.store.schema_from_dict(args_dict)
+    store.add_table('metadata', schema)
+    store['metadata'].append_row(args_dict)
 
-        test_set = torchvision.datasets.CIFAR10(root=DATA_PATH, train=False,
+
+def main(args):   
+    """
+    Iterate over the learning rates for training the base classifier, 
+    truncated classifier, and the standard classifier on truncated data.
+    """  
+    # load datasets
+    ds = CIFAR(data_path=DATA_PATH)
+    dataset = torchvision.datasets.CIFAR10(root=DATA_PATH, train=True,
                                             download=True, transform=transform_)
-        test_loader = ch.utils.data.DataLoader(test_set, batch_size=128,
-                                                shuffle=args.shuffle, num_workers=args.workers)
+    train_one, train_two = ch.utils.data.random_split(dataset, [25000, 25000], generator=Generator().manual_seed(0))
+    train_one_loader = ch.utils.data.DataLoader(train_one, batch_size=args.batch_size,
+                                            shuffle=args.shuffle, num_workers=args.workers)
+    train_two_loader = ch.utils.data.DataLoader(train_two, batch_size=args.batch_size,
+                                            shuffle=args.shuffle, num_workers=args.workers)
 
-        # train the base classifier
-        base_classifier, _ = model_utils.make_and_restore_model(arch='resnet18', dataset=ds)
-        # setup_store_with_metadata(args, store)
-        out_store = store.Store(BASE_CLASSIFIER)
-        ch.manual_seed(0)
-        train.train_model(args, base_classifier, (train_one_loader, test_loader), store=out_store)
+    test_set = torchvision.datasets.CIFAR10(root=DATA_PATH, train=False,
+                                        download=True, transform=transform_)
+    test_loader = ch.utils.data.DataLoader(test_set, batch_size=128,
+                                            shuffle=args.shuffle, num_workers=args.workers)
 
-        # calibrate base classifier
-        temp = calibrate(test_loader, base_classifier)
+    # train the base classifier
+    base_classifier, _ = model_utils.make_and_restore_model(arch='resnet18', dataset=ds)
+    out_store = store.Store(BASE_CLASSIFIER)
+    setup_store_with_metadata(args, out_store)
+    ch.manual_seed(0)
+    train.train_model(args, base_classifier, (train_one_loader, test_loader), store=out_store)
 
-        # truncate dataset using the calibrated classifier
-        phi = LogitBallComplement(args.logit_ball)
-        x_trunc, x_trunc_test, y_trunc, y_trunc_test = truncate(train_two_loader, base_classifier, phi, temp, cuda=True)
-        trunc_train_loader = DataLoader(TruncatedCIFAR(x_trunc, y_trunc, transform= None), num_workers=args.workers, shuffle=args.shuffle, batch_size=args.batch_size)
-        trunc_test_loader = DataLoader(TruncatedCIFAR(x_trunc_test, y_trunc_test, transform= None), num_workers=args.workers, shuffle=args.shuffle, batch_size=args.batch_size)
+    # calibrate base classifier
+    temp = calibrate(test_loader, base_classifier)
 
-        # test base classifier on datasets
-        base_unseen_results = train.eval_model(args, base_classifier, trunc_test_loader, store=out_store, table='unseen')
-        base_test_results = train.eval_model(args, base_classifier, test_loader, store=out_store, table='test')
-        base_train_results = train.eval_model(args, base_classifier, trunc_train_loader, store=out_store, table='trunc_train')
-        base_train_one_results = train.eval_model(args, base_classifier, train_one_loader, store=out_store, table='train_base')
-        out_store.close()
+    # truncate dataset using the calibrated classifier
+    phi = LogitBallComplement(args.logit_ball)
+    x_trunc, x_trunc_test, y_trunc, y_trunc_test = truncate(train_two_loader, base_classifier, phi, temp, cuda=True)
+    trunc_train_loader = DataLoader(TruncatedCIFAR(x_trunc, y_trunc, transform= None), num_workers=args.workers, shuffle=args.shuffle, batch_size=args.batch_size)
+    trunc_test_loader = DataLoader(TruncatedCIFAR(x_trunc_test, y_trunc_test, transform= None), num_workers=args.workers, shuffle=args.shuffle, batch_size=args.batch_size)
 
-        # logging store
-        delphi_, _ = model_utils.make_and_restore_model(arch='resnet18', dataset=ds)
-        out_store = store.Store(LOGIT_BALL_CLASSIFIER)
-        # setup_store_with_metadata(args, out_store)
+    # test base classifier on datasets
+    base_unseen_results = train.eval_model(args, base_classifier, trunc_test_loader, store=out_store, table='unseen')
+    base_test_results = train.eval_model(args, base_classifier, test_loader, store=out_store, table='test')
+    base_train_results = train.eval_model(args, base_classifier, trunc_train_loader, store=out_store, table='trunc_train')
+    base_train_one_results = train.eval_model(args, base_classifier, train_one_loader, store=out_store, table='train_base')
+    out_store.close()
 
-        # train
-        ch.manual_seed(0)
-        config.args = args
-        delphi_ = train.train_model(args, delphi_, (trunc_train_loader, trunc_test_loader), store=out_store, phi=phi, criterion=TruncatedCE.apply)
+    # logging store
+    delphi_, _ = model_utils.make_and_restore_model(arch='resnet18', dataset=ds)
+    out_store = store.Store(LOGIT_BALL_CLASSIFIER)
+    setup_store_with_metadata(args, out_store)
 
-        # test the standard model against the various datasets
-        delphi_unseen_results = train.eval_model(args, delphi_, trunc_test_loader, out_store, table='unseen')
-        delphi_test_results = train.eval_model(args, delphi_, test_loader, out_store, table='test')
-        delphi_train_results = train.eval_model(args, delphi_, trunc_train_loader, out_store, table='trunc_train')
-        delphi_train_one_results = train.eval_model(args, delphi_, train_one_loader, out_store, table='train_base')
-        out_store.close()
-        
-        # logging store
-        out_store = store.Store(STANDARD_CLASSIFIER)
-        # setup_store_with_metadata(args, out_store)
-        standard_model, _ = model_utils.make_and_restore_model(arch='resnet18', dataset=ds)
+    # train
+    ch.manual_seed(0)
+    config.args = args
+    delphi_ = train.train_model(args, delphi_, (trunc_train_loader, trunc_test_loader), store=out_store, phi=phi, criterion=TruncatedCE.apply)
 
-        # train classifier on truncated dataset 
-        ch.manual_seed(0)
-        config.args = args
-        standard_model = train.train_model(args, standard_model, (trunc_train_loader, trunc_test_loader), store=out_store, parallel=args.parallel)
+    # test the standard model against the various datasets
+    delphi_unseen_results = train.eval_model(args, delphi_, trunc_test_loader, out_store, table='unseen')
+    delphi_test_results = train.eval_model(args, delphi_, test_loader, out_store, table='test')
+    delphi_train_results = train.eval_model(args, delphi_, trunc_train_loader, out_store, table='trunc_train')
+    delphi_train_one_results = train.eval_model(args, delphi_, train_one_loader, out_store, table='train_base')
+    out_store.close()
+    
+    # logging store
+    out_store = store.Store(STANDARD_CLASSIFIER)
+    setup_store_with_metadata(args, out_store)
+    standard_model, _ = model_utils.make_and_restore_model(arch='resnet18', dataset=ds)
 
-        # test the standard model against the various datasets
-        standard_unseen_results = train.eval_model(args, standard_model, trunc_test_loader, out_store, table='unseen')
-        standard_test_results = train.eval_model(args, standard_model, test_loader, out_store, table='test')
-        standard_train_results = train.eval_model(args, standard_model, trunc_train_loader, out_store, table='trunc_train')
-        standard_train_one_results = train.eval_model(args, standard_model, train_one_loader, out_store, table='train_one')
-        out_store.close()
+    # train classifier on truncated dataset 
+    ch.manual_seed(0)
+    config.args = args
+    standard_model = train.train_model(args, standard_model, (trunc_train_loader, trunc_test_loader), store=out_store, parallel=args.parallel)
+
+    # test the standard model against the various datasets
+    standard_unseen_results = train.eval_model(args, standard_model, trunc_test_loader, out_store, table='unseen')
+    standard_test_results = train.eval_model(args, standard_model, test_loader, out_store, table='test')
+    standard_train_results = train.eval_model(args, standard_model, trunc_train_loader, out_store, table='trunc_train')
+    standard_train_one_results = train.eval_model(args, standard_model, train_one_loader, out_store, table='train_one')
+    out_store.close()
 
 
 if __name__ == '__main__': 
+
+    args_ = parser.parse_args()
+    args_ = cox.utils.Parameters(args.__dict__)
+
+
     # hyperparameters
     args = Parameters({ 
         'epochs': 100,
@@ -335,7 +354,8 @@ if __name__ == '__main__':
         'parallel': False, 
         'num_samples': 1000,
         'logit_ball': 7.5,
-        'device': 'cuda' if ch.cuda.is_available() else 'cpu'
+        'device': 'cuda' if ch.cuda.is_available() else 'cpu',
+        'lr': args_.lr
     })
 
     main(args)
