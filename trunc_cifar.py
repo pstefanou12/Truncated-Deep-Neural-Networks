@@ -42,8 +42,8 @@ gumbel = Gumbel(0, 1)
 num_classes = 10
 # store paths
 BASE_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/base_classifier_noised'
-LOGIT_BALL_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/truncated_ce_classifier_noised'
-STANDARD_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/standard_classifier_noised'
+LOGIT_BALL_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/truncated_ce_classifier_not_noised'
+STANDARD_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/standard_classifier_not_noised'
 # path to untruncated CV datasets
 DATA_PATH = '/home/gridsan/stefanou/data/'
 # truncated dataset names for saving datasets
@@ -198,7 +198,8 @@ def truncate(loader, model, phi, temp, cuda=False):
           noise = Gumbel(0, 1).rsample(logits.size())
           if cuda: 
             noise = noise.cuda()
-          noised = logits + noise
+        #   noised = logits + noise
+          noised = logits
           # truncate 
           filtered = phi(logits)
           indices = filtered.nonzero(as_tuple=False).flatten()
@@ -255,24 +256,25 @@ def main(args, learning_rates):
     Iterate over the learning rates for training the base classifier, 
     truncated classifier, and the standard classifier on truncated data.
     """  
+
+    # load datasets
+    ds = CIFAR(data_path=DATA_PATH)
+    dataset = torchvision.datasets.CIFAR10(root=DATA_PATH, train=True,
+        download=True, transform=transform_)
+    train_one, train_two = ch.utils.data.random_split(dataset, [25000, 25000], generator=Generator().manual_seed(0))
+    train_one_loader = ch.utils.data.DataLoader(train_one, batch_size=args.batch_size,
+        shuffle=args.shuffle, num_workers=args.workers)
+    train_two_loader = ch.utils.data.DataLoader(train_two, batch_size=args.batch_size,
+        shuffle=args.shuffle, num_workers=args.workers)
+
+    test_set = torchvision.datasets.CIFAR10(root=DATA_PATH, train=False,
+        download=True, transform=transform_)
+    test_loader = ch.utils.data.DataLoader(test_set, batch_size=128,
+        shuffle=args.shuffle, num_workers=args.workers)
+
     # iterate over learning rates
     for lr in learning_rates: 
         args.__setattr__('lr', lr)
-
-        # load datasets
-        ds = CIFAR(data_path=DATA_PATH)
-        dataset = torchvision.datasets.CIFAR10(root=DATA_PATH, train=True,
-            download=True, transform=transform_)
-        train_one, train_two = ch.utils.data.random_split(dataset, [25000, 25000], generator=Generator().manual_seed(0))
-        train_one_loader = ch.utils.data.DataLoader(train_one, batch_size=args.batch_size,
-            shuffle=args.shuffle, num_workers=args.workers)
-        train_two_loader = ch.utils.data.DataLoader(train_two, batch_size=args.batch_size,
-            shuffle=args.shuffle, num_workers=args.workers)
-
-        test_set = torchvision.datasets.CIFAR10(root=DATA_PATH, train=False,
-            download=True, transform=transform_)
-        test_loader = ch.utils.data.DataLoader(test_set, batch_size=128,
-            shuffle=args.shuffle, num_workers=args.workers)
 
         # train the base classifier
         base_classifier, _ = model_utils.make_and_restore_model(arch='resnet18', dataset=ds)
