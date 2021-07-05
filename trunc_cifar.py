@@ -45,9 +45,9 @@ parser.add_argument('--lr', type=float, default=1e-1, help='learning rate')
 gumbel = Gumbel(0, 1)
 num_classes = 10
 # store paths
-BASE_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/base_classifier_not_noised_again'
-LOGIT_BALL_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/truncated_ce_classifier_not_noised_again'
-STANDARD_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/standard_classifier_not_noised_again'
+BASE_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/base_classifier_noised_again'
+LOGIT_BALL_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/truncated_ce_classifier_noised_again'
+STANDARD_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/standard_classifier_noised_again'
 # path to untruncated CV datasets
 DATA_PATH = '/home/gridsan/stefanou/data/'
 # truncated dataset names for saving datasets
@@ -201,8 +201,8 @@ def truncate(loader, model, phi, temp, cuda=False):
           logits /= temp.item()
           noise = Gumbel(0, 1).rsample(logits.size())
           if cuda: 
-            noise = noise.cuda()
-        #   noised = logits + noise
+       #     noise = noise.cuda()
+            noised = logits + noise
           noised = logits
           # truncate 
           filtered = phi(logits)
