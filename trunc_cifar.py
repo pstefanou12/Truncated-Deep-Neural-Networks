@@ -1,3 +1,7 @@
+"""
+Script for running a batch job for truncated neural networks CIFAR-10 experiment.
+"""
+
 from delphi import train
 from delphi.utils import model_utils
 from delphi import grad
@@ -41,9 +45,9 @@ parser.add_argument('--lr', type=float, default=1e-1, help='learning rate')
 gumbel = Gumbel(0, 1)
 num_classes = 10
 # store paths
-BASE_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/base_classifier_noised'
-LOGIT_BALL_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/truncated_ce_classifier_not_noised'
-STANDARD_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/standard_classifier_not_noised'
+BASE_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/base_classifier_not_noised_again'
+LOGIT_BALL_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/truncated_ce_classifier_not_noised_again'
+STANDARD_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/standard_classifier_not_noised_again'
 # path to untruncated CV datasets
 DATA_PATH = '/home/gridsan/stefanou/data/'
 # truncated dataset names for saving datasets
@@ -277,10 +281,10 @@ def main(args, learning_rates):
         args.__setattr__('lr', lr)
 
         # train the base classifier
+        ch.manual_seed(0)
         base_classifier, _ = model_utils.make_and_restore_model(arch='resnet18', dataset=ds)
         out_store = store.Store(BASE_CLASSIFIER)
         setup_store_with_metadata(args, out_store)
-        ch.manual_seed(0)
         train.train_model(args, base_classifier, (train_one_loader, test_loader), store=out_store)
 
         # calibrate base classifier
@@ -300,12 +304,12 @@ def main(args, learning_rates):
         out_store.close()
 
         # logging store
+        ch.manual_seed(0)
         delphi_, _ = model_utils.make_and_restore_model(arch='resnet18', dataset=ds)
         out_store = store.Store(LOGIT_BALL_CLASSIFIER)
         setup_store_with_metadata(args, out_store)
 
         # train
-        ch.manual_seed(0)
         config.args = args
         delphi_ = train.train_model(args, delphi_, (trunc_train_loader, trunc_test_loader), store=out_store, phi=phi, criterion=TruncatedCE.apply)
 
@@ -317,12 +321,12 @@ def main(args, learning_rates):
         out_store.close()
 
         # logging store
+        ch.manual_seed(0)
         out_store = store.Store(STANDARD_CLASSIFIER)
         setup_store_with_metadata(args, out_store)
         standard_model, _ = model_utils.make_and_restore_model(arch='resnet18', dataset=ds)
 
         # train classifier on truncated dataset 
-        ch.manual_seed(0)
         config.args = args
         standard_model = train.train_model(args, standard_model, (trunc_train_loader, trunc_test_loader), store=out_store, parallel=args.parallel)
 
@@ -330,7 +334,7 @@ def main(args, learning_rates):
         standard_unseen_results = train.eval_model(args, standard_model, trunc_test_loader, out_store, table='unseen')
         standard_test_results = train.eval_model(args, standard_model, test_loader, out_store, table='test')
         standard_train_results = train.eval_model(args, standard_model, trunc_train_loader, out_store, table='trunc_train')
-        standard_train_one_results = train.eval_model(args, standard_model, train_one_loader, out_store, table='train_one')
+        standard_train_one_results = train.eval_model(args, standard_model, train_one_loader, out_store, table='train_base')
         out_store.close()
 
 
