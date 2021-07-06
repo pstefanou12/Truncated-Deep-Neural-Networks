@@ -255,59 +255,6 @@ def setup_store_with_metadata(args, store):
     store['metadata'].append_row(args_dict)
 
 
-def main(args, learning_rates):   
-    """
-    Iterate over the learning rates for training the base classifier, 
-    truncated classifier, and the standard classifier on truncated data.
-    """  
-
-    # load datasets
-    ds = CIFAR(data_path=DATA_PATH)
-    dataset = torchvision.datasets.CIFAR10(root=DATA_PATH, train=True,
-        download=True, transform=transform_)
-    train_one, train_two = ch.utils.data.random_split(dataset, [25000, 25000], generator=Generator().manual_seed(0))
-    train_one_loader = ch.utils.data.DataLoader(train_one, batch_size=args.batch_size,
-        shuffle=args.shuffle, num_workers=args.workers)
-    train_two_loader = ch.utils.data.DataLoader(train_two, batch_size=args.batch_size,
-        shuffle=args.shuffle, num_workers=args.workers)
-
-    test_set = torchvision.datasets.CIFAR10(root=DATA_PATH, train=False,
-        download=True, transform=transform_)
-    test_loader = ch.utils.data.DataLoader(test_set, batch_size=128,
-        shuffle=args.shuffle, num_workers=args.workers)
-
-    for i in range(args.trials):
-        # iterate over learning rates
-        for lr in learning_rates: 
-            # set learning rate
-            args.__setattr__('lr', lr)
-            # seed for training neural networks
-            seed = ch.randint(low=0, high=100, size=(1, 1))
-
-            # train and evaluate TruncatedCE classifier
-            base_classifier, out_store = train_(BASE_CLASSIFIER, (train_one_loader, test_loader), seed, ds)
-
-            # calibrate base classifier
-            temp = calibrate(test_loader, base_classifier)
-            # truncate dataset using the calibrated classifier
-            phi = LogitBallComplement(args.logit_ball)
-            x_trunc, x_unseen, y_trunc, y_unseen = truncate(train_two_loader, base_classifier, phi, temp, cuda=True)
-            trunc_train_loader = DataLoader(TruncatedCIFAR(x_trunc, y_trunc, transform= None), num_workers=args.workers, shuffle=args.shuffle, batch_size=args.batch_size)
-            unseen_loader = DataLoader(TruncatedCIFAR(x_unseen, y_unseen, transform= None), num_workers=args.workers, shuffle=args.shuffle, batch_size=args.batch_size)
-
-            # evalute base classifier on truncated and non-truncated datasets
-            eval_(base_classifier, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)
-
-            # train and evaluate TruncatedCE classifier
-            delphi_, out_store = train_(LOGIT_BALL_CLASSIFIER, (trunc_train_loader, test_loader), seed, ds)
-            eval_(delphi_, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)
-
-            # train and evaluate standard classifier trained on truncated data
-            standard_model, out_store = train_(STANDARD_CLASSIFIER, (trunc_train_loader, test_loader), seed, ds)
-            eval_(standard_model, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)  
-            
-
-
 
 def train_(path, loaders, seed, ds): 
     """
@@ -355,6 +302,57 @@ def eval_(model, out_store, unseen, test, trunc_train, train_one):
     out_store.close()
 
 
+def main(args, learning_rates):   
+    """
+    Iterate over the learning rates for training the base classifier, 
+    truncated classifier, and the standard classifier on truncated data.
+    """  
+
+    # load datasets
+    ds = CIFAR(data_path=DATA_PATH)
+    dataset = torchvision.datasets.CIFAR10(root=DATA_PATH, train=True,
+        download=True, transform=transform_)
+    train_one, train_two = ch.utils.data.random_split(dataset, [25000, 25000], generator=Generator().manual_seed(0))
+    train_one_loader = DataLoader(train_one, batch_size=args.batch_size,
+        shuffle=args.shuffle, num_workers=args.workers)
+    train_two_loader = DataLoader(train_two, batch_size=args.batch_size,
+        shuffle=args.shuffle, num_workers=args.workers)
+    test_set = torchvision.datasets.CIFAR10(root=DATA_PATH, train=False,
+        download=True, transform=transform_)
+    test_loader = DataLoader(test_set, batch_size=128,
+        shuffle=args.shuffle, num_workers=args.workers)
+
+    for i in range(args.trials):
+        # iterate over learning rates
+        for lr in learning_rates: 
+            # set learning rate
+            args.__setattr__('lr', lr)
+            # seed for training neural networks
+            seed = ch.randint(low=0, high=100, size=(1, 1))
+
+            # train and evaluate TruncatedCE classifier
+            base_classifier, out_store = train_(BASE_CLASSIFIER, (train_one_loader, test_loader), seed, ds)
+
+            # calibrate base classifier
+            temp = calibrate(test_loader, base_classifier)
+            # truncate dataset using the calibrated classifier
+            phi = LogitBallComplement(args.logit_ball)
+            x_trunc, x_unseen, y_trunc, y_unseen = truncate(train_two_loader, base_classifier, phi, temp, cuda=True)
+            trunc_train_loader = DataLoader(TruncatedCIFAR(x_trunc, y_trunc, transform=None), num_workers=args.workers, shuffle=args.shuffle, batch_size=args.batch_size)
+            unseen_loader = DataLoader(TruncatedCIFAR(x_unseen, y_unseen, transform=None), num_workers=args.workers, shuffle=args.shuffle, batch_size=args.batch_size)
+
+            # evalute base classifier on truncated and non-truncated datasets
+            eval_(base_classifier, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)
+
+            # train and evaluate TruncatedCE classifier
+            delphi_, out_store = train_(LOGIT_BALL_CLASSIFIER, (trunc_train_loader, test_loader), seed, ds)
+            eval_(delphi_, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)
+
+            # train and evaluate standard classifier trained on truncated data
+            standard_model, out_store = train_(STANDARD_CLASSIFIER, (trunc_train_loader, test_loader), seed, ds)
+            eval_(standard_model, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)  
+
+
 if __name__ == '__main__': 
     # hyperparameters
     args = Parameters({ 
@@ -379,7 +377,6 @@ if __name__ == '__main__':
     })
 
     main(args, LEARNING_RATES)
-
 
 
 
