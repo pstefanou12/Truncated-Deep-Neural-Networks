@@ -38,23 +38,37 @@ from argparse import ArgumentParser
 os.environ['HDF5_USE_FILE_LOCKING'] = 'FALSE'
 
 parser = ArgumentParser(description='Parser for running Truncated CIFAR-10 Experiments')
-parser.add_argument('--lr', type=float, default=1e-1, help='learning rate')
+parser.add_argument('--epochs', default=150, type=int, help='number of epochs to train neural networks', required=False)
+parser.add_argument('--lr', type=float, default=1e-1, help='learning rate', required=False)
+parser.add_argument('--momentum', type=float, default=0.0, help='momentum', required=False)
+parser.add_argument('--weight_decay', type=float, default=0.0, help='momentum', required=False)
+parser.add_argument('--step_lr', type=float, default=1e-1, help='number of steps to take before before decaying learning rate', required=False)
+parser.add_argument('--step_lr_gamma', type=float, default=.9, help='step learning rate of decay', required=False)
+parser.add_argument('--custom_lr_multiplier', help='custom learning rate multiplier', required=False)
+parser.add_argument('--adam', type=bool, action='store_true', help='adam optimizer', required=False)
+parser.add_argument('--trials', type=int, default=1, help='number of trials to perform experiment', required=False)
+parser.add_argument('--out_dir', type=int, help='directory name to hold results for experiment', required=True)
+parser.add_argument('--data_path', type=str, help='path to CIFAR dataset in filesystem', required=True)
+parser.add_argument('--workers', default=8, help='number of workers to use', required=False)
+parser.add_argument('--batch_size', type=int, default=128, help='batch size for training CIFAR network', required=False)
+parser.add_argument('--logit_ball', type=float, default=7.5, help='radius of logit ball for truncation set', required=False)
+parser.add_argument('--should_save_ckpt', action='store_true', help='whether or not to save DNN checkpoints during training', required=False)
+parser.add_argument('--save_ckpt_iters', type=int, help='whether or not to save DNN checkpoints during training', required=False)
+parser.add_argument('--log_iters', type=int, help='how often to log training metrics', required=False)
 
 # CONSTANTS
 # noise distributions
 gumbel = Gumbel(0, 1)
 num_classes = 10
 # store paths
-BASE_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/base_classifier_200epochs_not_noised/'
-LOGIT_BALL_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/truncated_ce_classifier_200epochs_not_noised/'
-STANDARD_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/standard_classifier_200epochs_not_noised/'
-# path to untruncated CV datasets
-DATA_PATH = '/home/gridsan/stefanou/data/'
+BASE_CLASSIFIER = '/base_classifier'
+LOGIT_BALL_CLASSIFIER = '/logit_ball'
+STANDARD_CLASSIFIER = '/standard_classifier'
 # truncated dataset names for saving datasets
 TRUNC_TRAIN_DATASET = 'trunc_train_'
 TRUNC_VAL_DATASET = 'trunc_val_'
 TRUNC_TEST_DATASET = 'trunc_test_'
-
+# learning rates to iterate over
 LEARNING_RATES = [1e-3, 1e-2, 1e-1, 2e-1, 3e-1]
 
 # HELPER CODE
@@ -307,9 +321,8 @@ def main(args, learning_rates):
     Iterate over the learning rates for training the base classifier, 
     truncated classifier, and the standard classifier on truncated data.
     """  
-
     # load datasets
-    ds = CIFAR(data_path=DATA_PATH)
+    ds = CIFAR(data_path=args.data_path)
     dataset = torchvision.datasets.CIFAR10(root=DATA_PATH, train=True,
         download=True, transform=transform_)
     train_one, train_two = ch.utils.data.random_split(dataset, [25000, 25000], generator=Generator().manual_seed(0))
@@ -331,7 +344,7 @@ def main(args, learning_rates):
             seed = ch.randint(low=0, high=100, size=(1, 1))
 
             # train and evaluate TruncatedCE classifier
-            base_classifier, out_store = train_(BASE_CLASSIFIER, (train_one_loader, test_loader), seed, ds)
+            base_classifier, out_store = train_(args.out_dir + BASE_CLASSIFIER, (train_one_loader, test_loader), seed, ds)
 
             # calibrate base classifier
             temp = calibrate(test_loader, base_classifier)
@@ -345,38 +358,33 @@ def main(args, learning_rates):
             eval_(base_classifier, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)
 
             # train and evaluate TruncatedCE classifier
-            delphi_, out_store = train_(LOGIT_BALL_CLASSIFIER, (trunc_train_loader, test_loader), seed, ds)
+            delphi_, out_store = train_(args.out_dir + LOGIT_BALL_CLASSIFIER, (trunc_train_loader, test_loader), seed, ds)
             eval_(delphi_, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)
 
             # train and evaluate standard classifier trained on truncated data
-            standard_model, out_store = train_(STANDARD_CLASSIFIER, (trunc_train_loader, test_loader), seed, ds)
+            standard_model, out_store = train_(args.out_dit + STANDARD_CLASSIFIER, (trunc_train_loader, test_loader), seed, ds)
             eval_(standard_model, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)  
 
 
 if __name__ == '__main__': 
-    # hyperparameters
-    args = Parameters({ 
-        'epochs': 200,
-        'trials': 5,
-        'workers': 8, 
-        'batch_size': 128, 
-        'accuracy': True,
-        'momentum': 0.9, 
-        'weight_decay': 5e-4, 
-        'save_ckpt_iters': 1,
-        'step_lr': 10, 
-        'step_lr_gamma': .9,
-        'should_save_ckpt': True,
-        'log_iters': 1,
-        'validation_split': .8,
-        'shuffle': True,
-        'parallel': False, 
-        'num_samples': 1000,
-        'logit_ball': 7.5,
-        'device': 'cuda' if ch.cuda.is_available() else 'cpu',
-    })
 
-    main(args, LEARNING_RATES)
+    args = parser.parse_args()
+    args = Parameters(args.__dict__)
+
+    # set other default hyperparameters
+    args.__setattr__('parallel', False)
+    args.__setattr__('validation_split', .8)
+    args.__setattr__('num_samples', 1000)
+    args.__setattr__('shuffle', True)
+    args.__setattr__('device', 'cuda' if ch.cuda.is_available() else 'cpu')
+
+
+    print(args)
+
+
+
+
+    # main(args, LEARNING_RATES)
 
 
 
