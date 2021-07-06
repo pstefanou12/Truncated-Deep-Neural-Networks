@@ -202,7 +202,7 @@ def truncate(loader, model, phi, temp, cuda=False):
           noise = Gumbel(0, 1).rsample(logits.size())
           if cuda: 
        #     noise = noise.cuda()
-            noised = logits + noise
+            noised = logits + noise.cuda()
           noised = logits
           # truncate 
           filtered = phi(logits)
