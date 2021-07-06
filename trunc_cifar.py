@@ -45,9 +45,9 @@ parser.add_argument('--lr', type=float, default=1e-1, help='learning rate')
 gumbel = Gumbel(0, 1)
 num_classes = 10
 # store paths
-BASE_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/base_classifier_noised_again'
-LOGIT_BALL_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/truncated_ce_classifier_noised_again'
-STANDARD_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/standard_classifier_noised_again'
+BASE_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/base_classifier_noised_200epochs'
+LOGIT_BALL_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/truncated_ce_classifier_noised_200epochs'
+STANDARD_CLASSIFIER = '/home/gridsan/stefanou/cifar-10/resnet-18/standard_classifier_noised_200epochs'
 # path to untruncated CV datasets
 DATA_PATH = '/home/gridsan/stefanou/data/'
 # truncated dataset names for saving datasets
@@ -341,7 +341,7 @@ def main(args, learning_rates):
 if __name__ == '__main__': 
     # hyperparameters
     args = Parameters({ 
-        'epochs': 100,
+        'epochs': 200,
         'workers': 8, 
         'batch_size': 128, 
         'accuracy': True,
