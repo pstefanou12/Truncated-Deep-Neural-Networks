@@ -38,18 +38,18 @@ from argparse import ArgumentParser
 os.environ['HDF5_USE_FILE_LOCKING'] = 'FALSE'
 
 parser = ArgumentParser(description='Parser for running Truncated CIFAR-10 Experiments')
-parser.add_argument('--epochs', default=150, type=int, help='number of epochs to train neural networks', required=False)
+parser.add_argument('--epochs', type=int, default=150,  help='number of epochs to train neural networks', required=False)
 parser.add_argument('--lr', type=float, default=1e-1, help='learning rate', required=False)
 parser.add_argument('--momentum', type=float, default=0.0, help='momentum', required=False)
 parser.add_argument('--weight_decay', type=float, default=0.0, help='momentum', required=False)
 parser.add_argument('--step_lr', type=float, default=1e-1, help='number of steps to take before before decaying learning rate', required=False)
 parser.add_argument('--step_lr_gamma', type=float, default=.9, help='step learning rate of decay', required=False)
 parser.add_argument('--custom_lr_multiplier', help='custom learning rate multiplier', required=False)
-parser.add_argument('--adam', type=bool, action='store_true', help='adam optimizer', required=False)
+parser.add_argument('--adam', action='store_true', help='adam optimizer', required=False)
 parser.add_argument('--trials', type=int, default=1, help='number of trials to perform experiment', required=False)
-parser.add_argument('--out_dir', type=int, help='directory name to hold results for experiment', required=True)
+parser.add_argument('--out_dir', type=str, help='directory name to hold results for experiment', required=True)
 parser.add_argument('--data_path', type=str, help='path to CIFAR dataset in filesystem', required=True)
-parser.add_argument('--workers', default=8, help='number of workers to use', required=False)
+parser.add_argument('--workers', type=int, default=8, help='number of workers to use', required=False)
 parser.add_argument('--batch_size', type=int, default=128, help='batch size for training CIFAR network', required=False)
 parser.add_argument('--logit_ball', type=float, default=7.5, help='radius of logit ball for truncation set', required=False)
 parser.add_argument('--should_save_ckpt', action='store_true', help='whether or not to save DNN checkpoints during training', required=False)
@@ -61,9 +61,9 @@ parser.add_argument('--log_iters', type=int, help='how often to log training met
 gumbel = Gumbel(0, 1)
 num_classes = 10
 # store paths
-BASE_CLASSIFIER = '/base_classifier'
-LOGIT_BALL_CLASSIFIER = '/logit_ball'
-STANDARD_CLASSIFIER = '/standard_classifier'
+BASE_CLASSIFIER = '/base_classifier/'
+LOGIT_BALL_CLASSIFIER = '/logit_ball/'
+STANDARD_CLASSIFIER = '/standard_classifier/'
 # truncated dataset names for saving datasets
 TRUNC_TRAIN_DATASET = 'trunc_train_'
 TRUNC_VAL_DATASET = 'trunc_val_'
@@ -292,7 +292,12 @@ def train_(path, loaders, seed, ds):
     out_store.close()
 
     # load in best classifier from training process
-    model, _ = model_utils.make_and_restore_model(arch='resnet18', dataset=ds, resume_path=path + exp_id + '/checkpoint.pt.best')
+    resume_path = path + exp_id +  '/checkpoint.pt.best'
+    # if there is not best network, take the most recent one
+    if not os.path.exists(resume_path):
+        resume_path = path + exp_id + '/checkpoint.pt.latest'
+
+    model, _ = model_utils.make_and_restore_model(arch='resnet18', dataset=ds, resume_path=resume_path)
     # reopen store for this experiment
     out_store = store.Store(path, exp_id)
     return model, out_store
@@ -323,14 +328,14 @@ def main(args, learning_rates):
     """  
     # load datasets
     ds = CIFAR(data_path=args.data_path)
-    dataset = torchvision.datasets.CIFAR10(root=DATA_PATH, train=True,
+    dataset = torchvision.datasets.CIFAR10(root=args.data_path, train=True,
         download=True, transform=transform_)
     train_one, train_two = ch.utils.data.random_split(dataset, [25000, 25000], generator=Generator().manual_seed(0))
     train_one_loader = DataLoader(train_one, batch_size=args.batch_size,
         shuffle=args.shuffle, num_workers=args.workers)
     train_two_loader = DataLoader(train_two, batch_size=args.batch_size,
         shuffle=args.shuffle, num_workers=args.workers)
-    test_set = torchvision.datasets.CIFAR10(root=DATA_PATH, train=False,
+    test_set = torchvision.datasets.CIFAR10(root=args.data_path, train=False,
         download=True, transform=transform_)
     test_loader = DataLoader(test_set, batch_size=128,
         shuffle=args.shuffle, num_workers=args.workers)
@@ -362,7 +367,7 @@ def main(args, learning_rates):
             eval_(delphi_, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)
 
             # train and evaluate standard classifier trained on truncated data
-            standard_model, out_store = train_(args.out_dit + STANDARD_CLASSIFIER, (trunc_train_loader, test_loader), seed, ds)
+            standard_model, out_store = train_(args.out_dir + STANDARD_CLASSIFIER, (trunc_train_loader, test_loader), seed, ds)
             eval_(standard_model, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)  
 
 
@@ -377,14 +382,13 @@ if __name__ == '__main__':
     args.__setattr__('num_samples', 1000)
     args.__setattr__('shuffle', True)
     args.__setattr__('device', 'cuda' if ch.cuda.is_available() else 'cpu')
+    args.__setattr__('accuracy', True)
+    args.__setattr__('betas', (0.9, 0.999))
+    args.__setattr__('amsgrad', False)
+    print('args: ', args)
 
-
-    print(args)
-
-
-
-
-    # main(args, LEARNING_RATES)
+    # perform experiment
+    main(args, LEARNING_RATES)
 
 
 
