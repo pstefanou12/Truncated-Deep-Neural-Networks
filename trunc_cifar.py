@@ -64,12 +64,6 @@ num_classes = 10
 BASE_CLASSIFIER = '/base_classifier/'
 LOGIT_BALL_CLASSIFIER = '/logit_ball/'
 STANDARD_CLASSIFIER = '/standard_classifier/'
-# truncated dataset names for saving datasets
-TRUNC_TRAIN_DATASET = 'trunc_train_'
-TRUNC_VAL_DATASET = 'trunc_val_'
-TRUNC_TEST_DATASET = 'trunc_test_'
-# learning rates to iterate over
-LEARNING_RATES = [1e-3, 1e-2, 1e-1, 2e-1, 3e-1]
 
 # HELPER CODE
 # dataset
@@ -214,12 +208,9 @@ def truncate(loader, model, phi, temp, cuda=False):
           # scaling logits by scaling parameter
           logits /= temp.item()
           noise = Gumbel(0, 1).rsample(logits.size())
-          if cuda: 
-            noise = noise.cuda()
-       #     noised = logits + noise.cuda()
-          noised = logits
+          noised = logits + noise.cuda()
           # truncate 
-          filtered = phi(logits)
+          filtered = phi(noised)
           indices = filtered.nonzero(as_tuple=False).flatten()
           test_indices = (~filtered).nonzero(as_tuple=False).flatten()
           x_trunc, y_trunc = ch.cat([x_trunc, inp[indices].cpu()]), ch.cat([y_trunc, targ[indices].cpu()])
@@ -321,7 +312,7 @@ def eval_(model, out_store, unseen, test, trunc_train, train_one):
     out_store.close()
 
 
-def main(args, learning_rates):   
+def main(args):   
     """
     Iterate over the learning rates for training the base classifier, 
     truncated classifier, and the standard classifier on truncated data.
@@ -330,6 +321,7 @@ def main(args, learning_rates):
     ds = CIFAR(data_path=args.data_path)
     dataset = torchvision.datasets.CIFAR10(root=args.data_path, train=True,
         download=True, transform=transform_)
+    # split training sets in half to prevent overfitting
     train_one, train_two = ch.utils.data.random_split(dataset, [25000, 25000], generator=Generator().manual_seed(0))
     train_one_loader = DataLoader(train_one, batch_size=args.batch_size,
         shuffle=args.shuffle, num_workers=args.workers)
@@ -341,34 +333,30 @@ def main(args, learning_rates):
         shuffle=args.shuffle, num_workers=args.workers)
 
     for i in range(args.trials):
-        # iterate over learning rates
-        for lr in learning_rates: 
-            # set learning rate
-            args.__setattr__('lr', lr)
-            # seed for training neural networks
-            seed = ch.randint(low=0, high=100, size=(1, 1))
+        # seed for training neural networks
+        seed = ch.randint(low=0, high=100, size=(1, 1))
 
-            # train and evaluate TruncatedCE classifier
-            base_classifier, out_store = train_(args.out_dir + BASE_CLASSIFIER, (train_one_loader, test_loader), seed, ds)
+        # train and evaluate TruncatedCE classifier
+        base_classifier, out_store = train_(args.out_dir + BASE_CLASSIFIER, (train_one_loader, test_loader), seed, ds)
 
-            # calibrate base classifier
-            temp = calibrate(test_loader, base_classifier)
-            # truncate dataset using the calibrated classifier
-            phi = LogitBallComplement(args.logit_ball)
-            x_trunc, x_unseen, y_trunc, y_unseen = truncate(train_two_loader, base_classifier, phi, temp, cuda=True)
-            trunc_train_loader = DataLoader(TruncatedCIFAR(x_trunc, y_trunc, transform=None), num_workers=args.workers, shuffle=args.shuffle, batch_size=args.batch_size)
-            unseen_loader = DataLoader(TruncatedCIFAR(x_unseen, y_unseen, transform=None), num_workers=args.workers, shuffle=args.shuffle, batch_size=args.batch_size)
+        # calibrate base classifier
+        temp = calibrate(test_loader, base_classifier)
+        # truncate dataset using the calibrated classifier
+        phi = LogitBallComplement(args.logit_ball)
+        x_trunc, x_unseen, y_trunc, y_unseen = truncate(train_two_loader, base_classifier, phi, temp, cuda=True)
+        trunc_train_loader = DataLoader(TruncatedCIFAR(x_trunc, y_trunc, transform=None), num_workers=args.workers, shuffle=args.shuffle, batch_size=args.batch_size)
+        unseen_loader = DataLoader(TruncatedCIFAR(x_unseen, y_unseen, transform=None), num_workers=args.workers, shuffle=args.shuffle, batch_size=args.batch_size)
 
-            # evalute base classifier on truncated and non-truncated datasets
-            eval_(base_classifier, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)
+        # evalute base classifier on truncated and non-truncated datasets
+        eval_(base_classifier, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)
 
-            # train and evaluate TruncatedCE classifier
-            delphi_, out_store = train_(args.out_dir + LOGIT_BALL_CLASSIFIER, (trunc_train_loader, test_loader), seed, ds)
-            eval_(delphi_, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)
+        # train and evaluate TruncatedCE classifier
+        delphi_, out_store = train_(args.out_dir + LOGIT_BALL_CLASSIFIER, (trunc_train_loader, test_loader), seed, ds)
+        eval_(delphi_, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)
 
-            # train and evaluate standard classifier trained on truncated data
-            standard_model, out_store = train_(args.out_dir + STANDARD_CLASSIFIER, (trunc_train_loader, test_loader), seed, ds)
-            eval_(standard_model, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)  
+        # train and evaluate standard classifier trained on truncated data
+        standard_model, out_store = train_(args.out_dir + STANDARD_CLASSIFIER, (trunc_train_loader, test_loader), seed, ds)
+        eval_(standard_model, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)  
 
 
 if __name__ == '__main__': 
@@ -388,8 +376,7 @@ if __name__ == '__main__':
     print('args: ', args)
 
     # perform experiment
-    main(args, LEARNING_RATES)
-
+    main(args)
 
 
 

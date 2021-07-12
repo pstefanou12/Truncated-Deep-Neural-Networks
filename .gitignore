@@ -1,3 +1,5 @@
 trunc_cifar.sh.log-*
 .vscode/
 .ipynb_checkpoints/
+*.out
+*.err
