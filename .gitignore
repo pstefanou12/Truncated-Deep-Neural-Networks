@@ -3,3 +3,5 @@ trunc_cifar.sh.log-*
 .ipynb_checkpoints/
 *.out
 *.err
+.trunc_cifar.py.swp
+

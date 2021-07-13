@@ -260,7 +260,6 @@ def setup_store_with_metadata(args, store):
     store['metadata'].append_row(args_dict)
 
 
-
 def train_(path, loaders, seed, ds): 
     """
     *INTERNAL FUNCTION* train resnet18 model on CIFAR-10 dataset.
@@ -369,8 +368,6 @@ if __name__ == '__main__':
     args.__setattr__('validation_split', .8)
     args.__setattr__('num_samples', 1000)
     args.__setattr__('shuffle', True)
-    args.__setattr__('device', 'cuda' if ch.cuda.is_available() else 'cpu')
-    args.__setattr__('accuracy', True)
     args.__setattr__('betas', (0.9, 0.999))
     args.__setattr__('amsgrad', False)
     print('args: ', args)
