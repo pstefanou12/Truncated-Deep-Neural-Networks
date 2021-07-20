@@ -172,8 +172,9 @@ class LogitBallComplement:
     In other words, retain the inputs that the classifier is more certain on. Larger 
     unnormalized log probabilities implies more certraining in classification.
     """
-    def __init__(self, bound): 
+    def __init__(self, bound, temp=1.0): 
         self.bound = bound
+        self.temp = ch.Tensor([temp]).cuda()
 
     def __call__(self, x): 
         return (x.norm(dim=-1) >= self.bound)
@@ -189,6 +190,7 @@ def truncate(loader, model, phi, temp, cuda=False):
         loader (ch.nn.DataLoader) : dataset to truncate
         model (delphi.AttackerModel) : model to truncate off of
         phi (delphi.oracle) : truncation set
+
         temp (ch.Tensor) : temperature scaling parameter to calibrate DNN by
         cuda (bool) : place dataset on GPU
       Returns: 
@@ -231,11 +233,13 @@ class TruncatedCE(ch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):  
+        import pdb; pdb.set_trace()
         pred, targ = ctx.saved_tensors
         # initialize gumbel distribution
         gumbel = Gumbel(0, 1)
         # make num_samples copies of pred logits
         stacked = pred[None, ...].repeat(config.args.num_samples, 1, 1)
+        stacked /= ctx.phi.temp
         # add gumbel noise to logits
         rand_noise = gumbel.sample(stacked.size()).to(config.args.device)
         noised = (stacked) + rand_noise 
@@ -260,13 +264,14 @@ def setup_store_with_metadata(args, store):
     store['metadata'].append_row(args_dict)
 
 
-def train_(path, loaders, seed, ds): 
+def train_(path, loaders, seed, ds, loss_fn, phi=None): 
     """
     *INTERNAL FUNCTION* train resnet18 model on CIFAR-10 dataset.
     Args: 
         path (str) : store path 
         loaders (Iterable) : iterable containing the DataLoaders for training/validating model
         ds (delphi.utils.Dataset) : dataset
+        loss_fn (ch.autograd.Function) : loss function for training neural network
     Returns: 
         best trained model, store 
     """
@@ -278,7 +283,7 @@ def train_(path, loaders, seed, ds):
     model, _ = model_utils.make_and_restore_model(arch='resnet18', dataset=ds)
     # train classifier on truncated dataset 
     config.args = args
-    model = train.train_model(args, model, loaders, store=out_store, parallel=args.parallel)
+    model = train.train_model(args, model, loaders, store=out_store, parallel=args.parallel, criterion=loss_fn, phi=phi)
     out_store.close()
 
     # load in best classifier from training process
@@ -336,12 +341,12 @@ def main(args):
         seed = ch.randint(low=0, high=100, size=(1, 1))
 
         # train and evaluate TruncatedCE classifier
-        base_classifier, out_store = train_(args.out_dir + BASE_CLASSIFIER, (train_one_loader, test_loader), seed, ds)
+        base_classifier, out_store = train_(args.out_dir + BASE_CLASSIFIER, (train_one_loader, test_loader), seed, ds, loss_fn=ch.nn.CrossEntropyLoss())
 
         # calibrate base classifier
         temp = calibrate(test_loader, base_classifier)
         # truncate dataset using the calibrated classifier
-        phi = LogitBallComplement(args.logit_ball)
+        phi = LogitBallComplement(args.logit_ball, ch.ones(1))
         x_trunc, x_unseen, y_trunc, y_unseen = truncate(train_two_loader, base_classifier, phi, temp, cuda=True)
         trunc_train_loader = DataLoader(TruncatedCIFAR(x_trunc, y_trunc, transform=None), num_workers=args.workers, shuffle=args.shuffle, batch_size=args.batch_size)
         unseen_loader = DataLoader(TruncatedCIFAR(x_unseen, y_unseen, transform=None), num_workers=args.workers, shuffle=args.shuffle, batch_size=args.batch_size)
@@ -350,11 +355,11 @@ def main(args):
         eval_(base_classifier, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)
 
         # train and evaluate TruncatedCE classifier
-        delphi_, out_store = train_(args.out_dir + LOGIT_BALL_CLASSIFIER, (trunc_train_loader, test_loader), seed, ds)
+        delphi_, out_store = train_(args.out_dir + LOGIT_BALL_CLASSIFIER, (trunc_train_loader, test_loader), seed, ds, loss_fn=TruncatedCE.apply, phi=phi)
         eval_(delphi_, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)
 
         # train and evaluate standard classifier trained on truncated data
-        standard_model, out_store = train_(args.out_dir + STANDARD_CLASSIFIER, (trunc_train_loader, test_loader), seed, ds)
+        standard_model, out_store = train_(args.out_dir + STANDARD_CLASSIFIER, (trunc_train_loader, test_loader), seed, ds, loss_fn=ch.nn.CrossEntropyLoss())
         eval_(standard_model, out_store, unseen_loader, test_loader, trunc_train_loader, train_one_loader)  
 
 
@@ -370,6 +375,8 @@ if __name__ == '__main__':
     args.__setattr__('shuffle', True)
     args.__setattr__('betas', (0.9, 0.999))
     args.__setattr__('amsgrad', False)
+    args.__setattr__('accuracy', True)
+    args.__setattr__('device', 'cuda' if ch.cuda.is_available() else 'cpu')
     print('args: ', args)
 
     # perform experiment
